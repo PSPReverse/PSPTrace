@@ -632,14 +632,7 @@ def normalize_timestamps(read_accesses):
 IO functions
 """
 
-
-def display_overview(read_accesses):
-    basic_fields = ['No.', 'Lowest access', 'Range', 'Type', 'Info']
-    verbose_fields = ['Start [ns]', 'Highest access']
-    all_fields = basic_fields + verbose_fields
-
-    t = PrettyTable(all_fields)
-
+def get_overview_read_accesses(read_accesses):
     entry_types = Entry.DIRECTORY_ENTRY_TYPES
     overview_read_accesses = {}
     known_types = {}  # dict of (type, is_ccp) and original_access_time
@@ -670,6 +663,17 @@ def display_overview(read_accesses):
             highest_access = overview_read_accesses[original_access_time]['highest_access']
             overview_read_accesses[original_access_time]['highest_access'] = max(highest_access,
                                                                                  values['address'] + values['size'])
+    return overview_read_accesses
+
+
+def display_overview(read_accesses):
+    entry_types = Entry.DIRECTORY_ENTRY_TYPES
+    basic_fields = ['No.', 'Lowest access', 'Range', 'Type', 'Info']
+    verbose_fields = ['Start [ns]', 'Highest access']
+    all_fields = basic_fields + verbose_fields
+
+    t = PrettyTable(all_fields)
+    overview_read_accesses = get_overview_read_accesses(read_accesses)
 
     for k, v in sorted(overview_read_accesses.items()):
         size = v['highest_access'] - v['lowest_access']
