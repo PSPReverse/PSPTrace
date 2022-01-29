@@ -381,6 +381,7 @@ def find_read_accesses(data):
     index = 0
     last_index = 0
     instr_index = 0
+    end_time = data['time'][index]
 
     # Case 1: This CSV export comes from the standard Saleae SPI analyzer
     if 'mosi' in data:
