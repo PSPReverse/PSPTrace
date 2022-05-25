@@ -267,7 +267,7 @@ def count_data_bytes(base_addr, s):
     return data_bytes
 
 
-def get_database(csvfile):
+def get_database(csvfile, psptool):
     database_file = csvfile + '.pickle'
 
     if os.path.exists(database_file):
@@ -332,7 +332,7 @@ def get_database(csvfile):
     data['raw']['time'] = [int(t * 10 ** 9) for t in data['raw']['time']]
 
     # parse read accesses from the raw data
-    data['read_accesses'] = find_read_accesses(data['raw'])
+    data['read_accesses'] = find_read_accesses(data['raw'], psptool)
 
     with open(database_file, 'wb') as f:
         pickle.dump(data, f)
@@ -342,13 +342,13 @@ def get_database(csvfile):
     return data
 
 
-def find_read_accesses(data):
+def find_read_accesses(data, psptool):
     """ Build up data structure containing all (fast) read accesses """
 
     read_accesses = {}
 
     # use psptool to correlate addresses to firmware directory entries
-    directories = psptool.blob.fets[0].directories
+    directories = [directory for rom in psptool.blob.roms for directory in rom.directories]
     directory_entries = [directory.entries for directory in directories]
 
     # flatten list of lists
@@ -619,7 +619,7 @@ def collapse_entry_types(read_accesses):
     return {values['start_time']: values for values in collapsed_read_accesses}
 
 
-def normalize_timestamps(read_accesses):
+def do_normalize_timestamps(read_accesses):
     normalized_read_accesses = {}
     min_time = min((v['start_time'] for v in read_accesses.values()))
 
@@ -634,6 +634,7 @@ def normalize_timestamps(read_accesses):
 """
 IO functions
 """
+
 
 def get_overview_read_accesses(read_accesses):
     entry_types = Entry.DIRECTORY_ENTRY_TYPES
@@ -669,96 +670,118 @@ def get_overview_read_accesses(read_accesses):
     return overview_read_accesses
 
 
-def display_overview(read_accesses):
-    entry_types = Entry.DIRECTORY_ENTRY_TYPES
-    basic_fields = ['No.', 'Lowest access', 'Range', 'Type', 'Info']
-    verbose_fields = ['Start [ns]', 'Highest access']
-    all_fields = basic_fields + verbose_fields
+class PSPTrace:
+    def __init__(self, csvfile, romfile, limit_rows=None):
+        self.psptool = PSPTool.from_file(romfile)
 
-    t = PrettyTable(all_fields)
-    overview_read_accesses = get_overview_read_accesses(read_accesses)
+        data = get_database(csvfile, self.psptool)
+        self.read_accesses = data['read_accesses']
 
-    for k, v in sorted(overview_read_accesses.items()):
-        size = v['highest_access'] - v['lowest_access']
+        if limit_rows:
+            self.read_accesses = {k: v for k, v in sorted(self.read_accesses.items())[:limit_rows]}
 
-        # Improve output of type # todo: remove code duplicate
-        if v['type'] is None:
-            v['type'] = 'Unknown area'
-        elif v['type'] in entry_types:
-            v['type'] = entry_types[v['type']]
-        elif type(v['type']) == int:
-            v['type'] = hex(v['type'])
+        # annotate reads of size 0x40 with 'CCP' (heuristic!)
+        for k, v in self.read_accesses.items():
+            if v['size'] == 0x40:
+                v['info'].append('CCP')
 
-        # todo: remove duplicate code here
+    def display_overview(self, verbose=False):
+        entry_types = Entry.DIRECTORY_ENTRY_TYPES
+        basic_fields = ['No.', 'Lowest access', 'Range', 'Type', 'Info']
+        verbose_fields = ['Start [ns]', 'Highest access']
+        all_fields = basic_fields + verbose_fields
 
-        # Display significant latencies
-        latency_in_us = v['latency'] // 1000
+        t = PrettyTable(all_fields)
+        overview_read_accesses = get_overview_read_accesses(self.read_accesses)
 
-        if latency_in_us > TIME_BLOCK_LATENCY_THRESHOLD:
-            t.add_row([''] * 7)
-            t.add_row([''] * 3 + ['~ %d µs delay ~' % latency_in_us] + [''] * 3)
-            t.add_row([''] * 7)
+        for k, v in sorted(overview_read_accesses.items()):
+            size = v['highest_access'] - v['lowest_access']
 
-        v['info'] = ' '.join(v['info'])
-        basic_values = [v['instr_index'], '0x%.6x' % v['lowest_access'], '0x%.6x' % size, v['type'], v['info']]
-        verbose_values = [v['start_time'], '0x%.6x' % v['highest_access']]
+            # Improve output of type # todo: remove code duplicate
+            if v['type'] is None:
+                v['type'] = 'Unknown area'
+            elif v['type'] in entry_types:
+                v['type'] = entry_types[v['type']]
+            elif type(v['type']) == int:
+                v['type'] = hex(v['type'])
 
-        t.add_row(basic_values + verbose_values)
+            # todo: remove duplicate code here
 
-    fields = basic_fields
+            # Display significant latencies
+            latency_in_us = v['latency'] // 1000
 
-    if args.verbose:
-        fields += verbose_fields
+            if latency_in_us > TIME_BLOCK_LATENCY_THRESHOLD:
+                t.add_row([''] * 7)
+                t.add_row([''] * 3 + ['~ %d µs delay ~' % latency_in_us] + [''] * 3)
+                t.add_row([''] * 7)
 
-    print(t.get_string(fields=fields))
+            v['info'] = ' '.join(v['info'])
+            basic_values = [v['instr_index'], '0x%.6x' % v['lowest_access'], '0x%.6x' % size, v['type'], v['info']]
+            verbose_values = [v['start_time'], '0x%.6x' % v['highest_access']]
 
+            t.add_row(basic_values + verbose_values)
 
-def display_read_accesses(read_accesses):
-    # display results
-    basic_fields = ['No.', 'Address', 'Size', 'Type', 'Info']
-    verbose_fields = ['Start [ns]', 'End [ns]', 'Duration [ns]', 'Latency [ns]']
-    all_fields = basic_fields + verbose_fields
-    all_keys = ['instr_index', 'address', 'size', 'type', 'info', 'start_time', 'end_time', 'duration', 'latency']
+        fields = basic_fields
 
-    t = PrettyTable(all_fields)
-    t.align['Info'] = 'l'
-    t.align['Start [ns]'] = 'r'
-    t.align['End [ns]'] = 'r'
-    t.align['Duration [ns]'] = 'r'
-    t.align['Latency [ns]'] = 'r'
+        if verbose:
+            fields += verbose_fields
 
-    entry_types = Entry.DIRECTORY_ENTRY_TYPES
+        print(t.get_string(fields=fields))
 
-    for start_time, values in sorted(read_accesses.items()):
-        # Improve output of type
-        if values['type'] is None:
-            values['type'] = 'Unknown area'
-        elif values['type'] in entry_types:
-            values['type'] = entry_types[values['type']]
-        elif type(values['type']) == int:
-            values['type'] = hex(values['type'])
+    def display_all(self, no_duplicates=False, collapse=False, normalize_timestamps=False, verbose=False):
+        read_accesses = self.read_accesses
+        if no_duplicates:
+            read_accesses = aggregate_duplicates(read_accesses)
+        if collapse:
+            read_accesses = collapse_entry_types(read_accesses)
+        if normalize_timestamps:
+            read_accesses = do_normalize_timestamps(read_accesses)
 
-        values['info'] = ' '.join(values['info'])
-        latency_in_us = values['latency'] // 1000
+        # display results
+        basic_fields = ['No.', 'Address', 'Size', 'Type', 'Info']
+        verbose_fields = ['Start [ns]', 'End [ns]', 'Duration [ns]', 'Latency [ns]']
+        all_fields = basic_fields + verbose_fields
+        all_keys = ['instr_index', 'address', 'size', 'type', 'info', 'start_time', 'end_time', 'duration', 'latency']
 
-        # Display significant latencies
-        if latency_in_us > TIME_BLOCK_LATENCY_THRESHOLD:
-            t.add_row([''] * 9)
-            t.add_row([''] * 3 + ['~ %d µs delay ~' % latency_in_us] + [''] * 5)
-            t.add_row([''] * 9)
+        t = PrettyTable(all_fields)
+        t.align['Info'] = 'l'
+        t.align['Start [ns]'] = 'r'
+        t.align['End [ns]'] = 'r'
+        t.align['Duration [ns]'] = 'r'
+        t.align['Latency [ns]'] = 'r'
 
-        values['size'] = '0x%.2x' % values['size']
-        values['address'] = '0x%.6x' % values['address']
+        entry_types = Entry.DIRECTORY_ENTRY_TYPES
 
-        t.add_row([values.get(key) for key in all_keys])
+        for start_time, values in sorted(read_accesses.items()):
+            # Improve output of type
+            if values['type'] is None:
+                values['type'] = 'Unknown area'
+            elif values['type'] in entry_types:
+                values['type'] = entry_types[values['type']]
+            elif type(values['type']) == int:
+                values['type'] = hex(values['type'])
 
-    # See which fields are actually demanded (depending on -v)
-    fields = basic_fields
+            values['info'] = ' '.join(values['info'])
+            latency_in_us = values['latency'] // 1000
 
-    if args.verbose:
-        fields += verbose_fields
+            # Display significant latencies
+            if latency_in_us > TIME_BLOCK_LATENCY_THRESHOLD:
+                t.add_row([''] * 9)
+                t.add_row([''] * 3 + ['~ %d µs delay ~' % latency_in_us] + [''] * 5)
+                t.add_row([''] * 9)
 
-    print(t.get_string(fields=fields))
+            values['size'] = '0x%.2x' % values['size']
+            values['address'] = '0x%.6x' % values['address']
+
+            t.add_row([values.get(key) for key in all_keys])
+
+        # See which fields are actually demanded (depending on -v)
+        fields = basic_fields
+
+        if verbose:
+            fields += verbose_fields
+
+        print(t.get_string(fields=fields))
 
 
 def main():
@@ -784,7 +807,6 @@ def main():
     parser.add_argument('-v', '--verbose', help='increase output verbosity', action='store_true')
     parser.add_argument('-V', '--version', action='store_true')
 
-    global args, psptool
     args = parser.parse_args()
 
     if args.version:
@@ -794,36 +816,13 @@ def main():
         parser.print_help(sys.stderr)
         sys.exit(0)
 
-    with open(args.romfile, 'rb') as f:
-        binary = f.read()
-
-    psptool = PSPTool(binary)
-
-    data = get_database(args.csvfile)
-    read_accesses = data['read_accesses']
-
-    if args.limit_rows:
-        read_accesses = {k: v for k, v in sorted(read_accesses.items())[:args.limit_rows]}
-
-    # annotate reads of size 0x40 with 'CCP' (heuristic!)
-    for k, v in read_accesses.items():
-        if v['size'] == 0x40:
-            v['info'].append('CCP')
+    psptrace = PSPTrace(args.csvfile, args.romfile, limit_rows=args.limit_rows)
 
     if args.overview_mode:
-        display_overview(read_accesses)
-        return
-
-    if args.no_duplicates:
-        read_accesses = aggregate_duplicates(read_accesses)
-
-    if args.collapse:
-        read_accesses = collapse_entry_types(read_accesses)
-
-    if args.normalize_timestamps:
-        read_accesses = normalize_timestamps(read_accesses)
-
-    display_read_accesses(read_accesses)
+        psptrace.display_overview(verbose=args.verbose)
+    else:
+        psptrace.display_all(no_duplicates=args.no_duplicates, collapse=args.collapse,
+                             normalize_timestamps=args.normalize_timestamps, verbose=args.verbose)
 
 
 if __name__ == '__main__':
