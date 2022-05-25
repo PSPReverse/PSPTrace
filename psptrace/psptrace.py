@@ -21,9 +21,11 @@ import pickle
 import csv
 import sys
 import argparse
+import pkg_resources
 
 from signal import signal, SIGPIPE, SIG_DFL
 from collections import deque
+
 from prettytable import PrettyTable
 
 from psptool import PSPTool
@@ -768,8 +770,8 @@ def main():
                                                 'file resembling the flash contents and display an access chronology. '
                                                 'On first load, psptrace needs to parse a lot of raw data which will '
                                                 'be saved on disk. All other loads will then be much faster.')
-    parser.add_argument('csvfile', help='CSV file of SPI capture')
-    parser.add_argument('romfile', help='ROM file of SPI contents')
+    parser.add_argument('csvfile', help='CSV file of SPI capture', nargs='?')
+    parser.add_argument('romfile', help='ROM file of SPI contents', nargs='?')
     parser.add_argument('-o', '--overview-mode', help='aggregate accesses to the same firmware entry',
                         action='store_true')
     parser.add_argument('-n', '--no-duplicates', help='hide duplicate accesses (e.g. caused by multiple PSPs)',
@@ -780,9 +782,17 @@ def main():
     parser.add_argument('-t', '--normalize-timestamps', help='normalize all timestamps', action='store_true')
     parser.add_argument('-l', '--limit-rows', help='limit the processed rows to a maximum of n', type=int)
     parser.add_argument('-v', '--verbose', help='increase output verbosity', action='store_true')
+    parser.add_argument('-V', '--version', action='store_true')
 
     global args, psptool
     args = parser.parse_args()
+
+    if args.version:
+        print(pkg_resources.get_distribution("psptrace").version)
+        sys.exit(0)
+    elif not args.csvfile or not args.romfile:
+        parser.print_help(sys.stderr)
+        sys.exit(0)
 
     with open(args.romfile, 'rb') as f:
         binary = f.read()
