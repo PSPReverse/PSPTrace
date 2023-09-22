@@ -447,7 +447,7 @@ def find_read_accesses(data, psptool):
             value = data['value'][index]
             next_value = data['value'][index + 1]
 
-            if value in [0x03, 0x0B, 0xEB, 0xE7, 0xE3] and next_value > 0xFF:  # normal and Quad IO Read commands
+            if value in [0x03, 0x0B, 0xEB, 0xE7, 0xE3, 0xEC] and next_value > 0xFF:  # normal and Quad IO Read commands
                     address = next_value
 
                     start_time = data['time'][index]
