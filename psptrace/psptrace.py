@@ -19,6 +19,7 @@
 import os
 import pickle
 import csv
+import struct
 import sys
 import argparse
 import pkg_resources
@@ -29,7 +30,7 @@ from collections import deque
 from prettytable import PrettyTable
 
 from psptool import PSPTool
-from psptool.entry import Entry
+from psptool.file import File
 
 # from http://www.winbond.com.tw/resource-files/w25q128jv%20spi%20revb%2011082016.pdf
 WINBOND_INSTRUCTIONS = {
@@ -71,6 +72,11 @@ WINBOND_INSTRUCTIONS = {
     0x03: {
         'name': 'Read Data',
         'size': 4,
+        'expects_data': True
+    },
+    0x13: {
+        'name': 'Read Data with 4-Byte Address',
+        'size': 5,
         'expects_data': True
     },
     0x0B: {
@@ -312,7 +318,8 @@ def get_database(csvfile, psptool):
                     pass
 
         # Case 2: This CSV export comes from the Quad SPI analyzer at https://github.com/dedicatedcomputing/saleae_qspi
-        elif reader.fieldnames == ['Time [s]', 'Value']:
+        elif reader.fieldnames == ['Time [s]', 'Packet ID', ' Transaction State', ' DATA', ' Lines Used']:
+            # todo: Make use of Transaction state. 1 is command byte, 2 is first address byte, then everthing is 4?
             data = {
                 'raw': {
                     'time': [],
@@ -324,7 +331,7 @@ def get_database(csvfile, psptool):
             for row in reader:
                 try:
                     data['raw']['time'].append(float(row['Time [s]']))
-                    data['raw']['value'].append(int(row['Value'], 16))
+                    data['raw']['value'].append(int(row[' DATA'], 16))
                 except ValueError:
                     pass
 
@@ -352,7 +359,7 @@ def find_read_accesses(data, psptool):
     directory_entries = [directory.entries for directory in directories]
 
     # flatten list of lists
-    all_entries = [entry for sublist in directory_entries for entry in sublist]
+    all_entries = psptool.blob.unique_files()
 
     # add directory headers as entries, too
     # all_entries += [{
@@ -390,16 +397,23 @@ def find_read_accesses(data, psptool):
         while index < len(data['mosi']):
             instr = data['mosi'][index]
 
-            if instr == 0x03 or instr == 0x0b:  # i.e. instruction 'Read data' or 'Fast Read'
+            # 'Read data' or 'Fast Read or 'Read Data with 4-Byte Address'
+            if instr in [0x03, 0x0b, 0x13]:
                 instr_size = WINBOND_INSTRUCTIONS[instr]['size']
+                addr_size = instr_size - 1
                 data_bytes = count_data_bytes(index + instr_size, data['mosi'])
 
                 start_time = data['time'][index]
-                end_time = data['time'][index + data_bytes]
+                try:
+                    end_time = data['time'][index + data_bytes]
+                except IndexError:
+                    print('Warning: Incomplete Read encountered, stopping parser')
+                    break
                 duration = end_time - start_time
                 latency = start_time - last_end_time
 
-                address = int.from_bytes(bytes(data['mosi'][index + 1:index + 4]), byteorder='big')
+                address = int.from_bytes(bytes(data['mosi'][index + 1:index + 1 + addr_size]), byteorder='big')
+                address &= psptool.blob.roms[0].addr_mask  # todo: don't just assume that we use rom 0 in multiroms
                 size = data_bytes
                 type_ = type_at_address_range[address]
 
@@ -441,14 +455,15 @@ def find_read_accesses(data, psptool):
                 index += 1  # we assume an instr_size of 1 and no return data
                 instr_index += 1
 
-    # Case 2: This CSV export comes from the Quad SPI analyzer at https://github.com/dedicatedcomputing/saleae_qspi
+    # Case 2: This CSV export comes from the Quad SPI analyzer at https://github.com/AddioElectronics/QSPI-Analyzer
     elif 'value' in data:
         while index < len(data['value']) - 1:
             value = data['value'][index]
             next_value = data['value'][index + 1]
 
-            if value in [0x03, 0x0B, 0xEB, 0xE7, 0xE3, 0xEC] and next_value > 0xFF:  # normal and Quad IO Read commands
-                    address = next_value
+            if value in [0x03, 0x0B, 0xEB, 0xE7, 0xE3, 0xEC] and next_value in [0xFF, 0xFC]:  # normal and Quad IO Read commands
+                    address = struct.unpack(">I", bytes(data['value'][index + 1:index + 5]))[0]
+                    address &= psptool.blob.roms[0].addr_mask
 
                     start_time = data['time'][index]
 
@@ -458,7 +473,7 @@ def find_read_accesses(data, psptool):
                         # set the read size of the previous read access based on the number of non-instruction values
                         #  before and deduct the instruction and address packets
                         read_accesses[last_start_time]['size'] = index - last_index - 2
-                        # todo: identify dummy cycles
+                        # todo: identify dummy cycles -- nope, this should by done by the analyzer before exporting!
                         previous_start_time = read_accesses[last_start_time]['start_time']
                         previous_last_end_time = read_accesses[last_start_time]['last_end_time']
 
@@ -637,7 +652,7 @@ IO functions
 
 
 def get_overview_read_accesses(read_accesses):
-    entry_types = Entry.DIRECTORY_ENTRY_TYPES
+    entry_types = File.DIRECTORY_ENTRY_TYPES
     overview_read_accesses = {}
     known_types = {}  # dict of (type, is_ccp) and original_access_time
 
@@ -673,6 +688,7 @@ def get_overview_read_accesses(read_accesses):
 class PSPTrace:
     def __init__(self, csvfile, romfile, limit_rows=None):
         self.psptool = PSPTool.from_file(romfile)
+        # todo: consider rom files with CAP or other headers and take offsets into account
 
         data = get_database(csvfile, self.psptool)
         self.read_accesses = data['read_accesses']
@@ -686,7 +702,7 @@ class PSPTrace:
                 v['info'].append('CCP')
 
     def display_overview(self, verbose=False):
-        entry_types = Entry.DIRECTORY_ENTRY_TYPES
+        entry_types = File.DIRECTORY_ENTRY_TYPES
         basic_fields = ['No.', 'Lowest access', 'Range', 'Type', 'Info']
         verbose_fields = ['Start [ns]', 'Highest access']
         all_fields = basic_fields + verbose_fields
@@ -750,7 +766,7 @@ class PSPTrace:
         t.align['Duration [ns]'] = 'r'
         t.align['Latency [ns]'] = 'r'
 
-        entry_types = Entry.DIRECTORY_ENTRY_TYPES
+        entry_types = File.DIRECTORY_ENTRY_TYPES
 
         for start_time, values in sorted(read_accesses.items()):
             # Improve output of type
