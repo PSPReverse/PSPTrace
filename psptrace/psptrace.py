@@ -462,6 +462,9 @@ def find_read_accesses(data, psptool):
             next_value = data['value'][index + 1]
 
             if value in [0x03, 0x0B, 0xEB, 0xE7, 0xE3, 0xEC] and next_value in [0xFF, 0xFC]:  # normal and Quad IO Read commands
+                    if not all([0 <= data['value'][index] <= 255 for index in range(5)]):
+                        #print(f"Skipping invalid read command with {value=:x} {next_value=:x} then: {data['value'][index + 2]:x} {data['value'][index + 3]:x} {data['value'][index + 4]:x}")
+                        continue
                     address = struct.unpack(">I", bytes(data['value'][index + 1:index + 5]))[0]
                     address &= psptool.blob.roms[0].addr_mask
 
