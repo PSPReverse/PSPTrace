@@ -33,9 +33,11 @@ from psptool import PSPTool
 from psptool.file import File
 from .winbond_instructions import WINBOND_INSTRUCTIONS
 
+
 class ObligingArgumentParser(argparse.ArgumentParser):
     """ Display the full help message whenever there is something wrong with the arguments.
         (from https://groups.google.com/d/msg/argparse-users/LazV_tEQvQw/xJhBOm1qS5IJ) """
+
     def error(self, message):
         sys.stderr.write('Error: %s\n' % message)
         self.print_help()
@@ -81,7 +83,8 @@ def get_database(csvfile, psptool):
 
         # (imperfect) check if this database is complete and up to date
         if 'raw' in data and 'read_accesses' in data:
-            print('Info: Loaded a capture of %d rows.' % len(data['raw']['time']))
+            print('Info: Loaded a capture of %d rows.' %
+                  len(data['raw']['time']))
             return data
         else:
             print('Info: Loaded database is incomplete or outdated!')
@@ -92,8 +95,8 @@ def get_database(csvfile, psptool):
         reader = csv.DictReader(csvfile, delimiter=',')
 
         # Case 1: This CSV export comes from the standard Saleae SPI analyzer
-        if reader.fieldnames == ['Time [s]', 'Packet ID' , 'MOSI' , 'MISO'] or \
-            reader.fieldnames == ['Time [s]', 'Packet ID' , 'MOSI']:
+        if reader.fieldnames == ['Time [s]', 'Packet ID', 'MOSI', 'MISO'] or \
+                reader.fieldnames == ['Time [s]', 'Packet ID', 'MOSI']:
 
             data = {
                 'raw': {
@@ -109,7 +112,7 @@ def get_database(csvfile, psptool):
                     data['raw']['time'].append(float(row['Time [s]']))
                     data['raw']['packet_id'].append(int(row['Packet ID']))
                     data['raw']['mosi'].append(int(row['MOSI'], 16))
-                    #data['raw']['miso'].append(int(row['MISO'], 16))
+                    # data['raw']['miso'].append(int(row['MISO'], 16))
                 except ValueError:
                     pass
 
@@ -140,7 +143,8 @@ def get_database(csvfile, psptool):
     with open(database_file, 'wb') as f:
         pickle.dump(data, f)
 
-    print('Info: Parsed and stored a database of %d rows.' % len(data['raw']['time']))
+    print('Info: Parsed and stored a database of %d rows.' %
+          len(data['raw']['time']))
 
     return data
 
@@ -151,7 +155,8 @@ def find_read_accesses(data, psptool):
     read_accesses = {}
 
     # use psptool to correlate addresses to firmware directory entries
-    directories = [directory for rom in psptool.blob.roms for directory in rom.directories]
+    directories = [
+        directory for rom in psptool.blob.roms for directory in rom.directories]
     directory_entries = [directory.entries for directory in directories]
 
     # flatten list of lists
@@ -167,9 +172,11 @@ def find_read_accesses(data, psptool):
     # create RangeDict in order to find entry types for addresses
     type_at_address_range = RangeDict({
         ** {
-            range(entry.get_address(), entry.get_address() + entry.buffer_size):  # key is start and end address of the entry
+            # key is start and end address of the entry
+            range(entry.get_address(), entry.get_address() + entry.buffer_size):
             entry.type
-            for entry in all_entries if entry.buffer_size != 0xffffffff  # value is its type
+            # value is its type
+            for entry in all_entries if entry.buffer_size != 0xffffffff
         }, ** {
             range(directory.get_address(), directory.get_address() + len(directory)):
             'Directory: ' + str(directory.magic, 'ascii')
@@ -208,8 +215,10 @@ def find_read_accesses(data, psptool):
                 duration = end_time - start_time
                 latency = start_time - last_end_time
 
-                address = int.from_bytes(bytes(data['mosi'][index + 1:index + 1 + addr_size]), byteorder='big')
-                address &= psptool.blob.roms[0].addr_mask  # todo: don't just assume that we use rom 0 in multiroms
+                address = int.from_bytes(
+                    bytes(data['mosi'][index + 1:index + 1 + addr_size]), byteorder='big')
+                # todo: don't just assume that we use rom 0 in multiroms
+                address &= psptool.blob.roms[0].addr_mask
                 size = data_bytes
                 type_ = type_at_address_range[address]
 
@@ -231,12 +240,14 @@ def find_read_accesses(data, psptool):
                 instr_index += 1
 
             elif instr in WINBOND_INSTRUCTIONS:  # i.e. unparsable instructions
-                unparsable_instructions[WINBOND_INSTRUCTIONS[instr]['name']] += 1
+                unparsable_instructions[WINBOND_INSTRUCTIONS[instr]
+                                        ['name']] += 1
 
                 data_bytes = 0
                 if WINBOND_INSTRUCTIONS[instr]['expects_data']:
                     instr_size = WINBOND_INSTRUCTIONS[instr]['size']
-                    data_bytes = count_data_bytes(index + instr_size, data['mosi'])
+                    data_bytes = count_data_bytes(
+                        index + instr_size, data['mosi'])
 
                 last_end_time = end_time
                 index += WINBOND_INSTRUCTIONS[instr]['size'] + data_bytes
@@ -257,50 +268,54 @@ def find_read_accesses(data, psptool):
             value = data['value'][index]
             next_value = data['value'][index + 1]
 
-            if value in [0x03, 0x0B, 0xEB, 0xE7, 0xE3, 0xEC] and next_value in [0xFF, 0xFC]:  # normal and Quad IO Read commands
-                    if not all(0 <= data['value'][index + i] <= 255 for i in range(5)):
-                        # print(f"Skipping invalid read command with {value=:x} {next_value=:x} then: {data['value'][index + 2]:x} {data['value'][index + 3]:x} {data['value'][index + 4]:x} at index {index}")
-                        last_index = index
-                        index += 1
-                        continue
-                    address = struct.unpack(">I", bytes(data['value'][index + 1:index + 5]))[0]
-                    address &= psptool.blob.roms[0].addr_mask
-
-                    start_time = data['time'][index]
-
-                    type_ = type_at_address_range[address]
-
-                    if instr_index > 0:
-                        # set the read size of the previous read access based on the number of non-instruction values
-                        #  before and deduct the instruction and address packets
-                        read_accesses[last_start_time]['size'] = index - last_index - 2
-                        # todo: identify dummy cycles -- nope, this should by done by the analyzer before exporting!
-                        previous_start_time = read_accesses[last_start_time]['start_time']
-                        previous_last_end_time = read_accesses[last_start_time]['last_end_time']
-
-                        previous_end_time = data['time'][index - 1]
-                        previous_duration = previous_end_time - previous_start_time
-                        previous_latency = previous_start_time - previous_last_end_time
-
-                        read_accesses[last_start_time]['end_time'] = previous_end_time
-                        read_accesses[last_start_time]['duration'] = previous_duration
-                        read_accesses[last_start_time]['latency'] = previous_latency
-
-                    read_accesses[start_time] = {
-                        'instr_index': instr_index,
-                        'start_time': start_time,
-                        'last_end_time': last_end_time,
-                        'address': address,
-                        'type': type_,
-                        'info': ['QSPI'] if value in [0xEB, 0xE7, 0xE3] else []
-                    }
-
-                    # skip forward
-                    last_start_time = start_time
-                    last_end_time = previous_end_time if instr_index > 0 else 0
+            # normal and Quad IO Read commands
+            if value in [0x03, 0x0B, 0xEB, 0xE7, 0xE3, 0xEC] and next_value in [0xFF, 0xFC]:
+                if not all(0 <= data['value'][index + i] <= 255 for i in range(5)):
+                    # print(f"Skipping invalid read command with {value=:x} {next_value=:x} then: {data['value'][index + 2]:x} {data['value'][index + 3]:x} {data['value'][index + 4]:x} at index {index}")
                     last_index = index
-                    index += 2  # one address packet and at least one dummy packet (it seems)
-                    instr_index += 1
+                    index += 1
+                    continue
+                address = struct.unpack(">I", bytes(
+                    data['value'][index + 1:index + 5]))[0]
+                address &= psptool.blob.roms[0].addr_mask
+
+                start_time = data['time'][index]
+
+                type_ = type_at_address_range[address]
+
+                if instr_index > 0:
+                    # set the read size of the previous read access based on the number of non-instruction values
+                    #  before and deduct the instruction and address packets
+                    read_accesses[last_start_time]['size'] = index - \
+                        last_index - 2
+                    # todo: identify dummy cycles -- nope, this should by done by the analyzer before exporting!
+                    previous_start_time = read_accesses[last_start_time]['start_time']
+                    previous_last_end_time = read_accesses[last_start_time]['last_end_time']
+
+                    previous_end_time = data['time'][index - 1]
+                    previous_duration = previous_end_time - previous_start_time
+                    previous_latency = previous_start_time - previous_last_end_time
+
+                    read_accesses[last_start_time]['end_time'] = previous_end_time
+                    read_accesses[last_start_time]['duration'] = previous_duration
+                    read_accesses[last_start_time]['latency'] = previous_latency
+
+                read_accesses[start_time] = {
+                    'instr_index': instr_index,
+                    'start_time': start_time,
+                    'last_end_time': last_end_time,
+                    'address': address,
+                    'type': type_,
+                    'info': ['QSPI'] if value in [0xEB, 0xE7, 0xE3] else []
+                }
+
+                # skip forward
+                last_start_time = start_time
+                last_end_time = previous_end_time if instr_index > 0 else 0
+                last_index = index
+                # one address packet and at least one dummy packet (it seems)
+                index += 2
+                instr_index += 1
             else:
                 index += 1
 
@@ -327,7 +342,8 @@ Data post-processing functions
 """
 
 
-MAXIMUM_AGGREGATION_COUNT = 8  # todo: this comes from the number of PSPs – parametrize this somehow
+# todo: this comes from the number of PSPs – parametrize this somehow
+MAXIMUM_AGGREGATION_COUNT = 8
 TIME_BLOCK_LATENCY_THRESHOLD = 50  # microseconds
 
 
@@ -373,7 +389,8 @@ def aggregate_duplicates(read_accesses):
     for time, values in aggregated_accesses.items():
         # add a note about its aggregation
         # todo: extract this to a display function
-        aggregated_accesses[time]['info'].append('x%d' % aggregated_accesses[time]['duplicate_count'])
+        aggregated_accesses[time]['info'].append(
+            'x%d' % aggregated_accesses[time]['duplicate_count'])
 
     return aggregated_accesses
 
@@ -428,7 +445,8 @@ def collapse_entry_types(read_accesses):
             'type': values['type'],
             'address': values['address'],
             'size': values['size'],
-            'duplicate_count': values.get('duplicate_count')  # this may be missing (=> None)
+            # this may be missing (=> None)
+            'duplicate_count': values.get('duplicate_count')
         }
 
     # convert the list of dicts back to a dict
@@ -478,7 +496,8 @@ def get_overview_read_accesses(read_accesses):
             original_access_time = known_types[(values['type'], is_ccp)]
 
             lowest_access = overview_read_accesses[original_access_time]['lowest_access']
-            overview_read_accesses[original_access_time]['lowest_access'] = min(lowest_access, values['address'])
+            overview_read_accesses[original_access_time]['lowest_access'] = min(
+                lowest_access, values['address'])
 
             highest_access = overview_read_accesses[original_access_time]['highest_access']
             overview_read_accesses[original_access_time]['highest_access'] = max(highest_access,
@@ -495,7 +514,8 @@ class PSPTrace:
         self.read_accesses = data['read_accesses']
 
         if limit_rows:
-            self.read_accesses = {k: v for k, v in sorted(self.read_accesses.items())[:limit_rows]}
+            self.read_accesses = {k: v for k, v in sorted(
+                self.read_accesses.items())[:limit_rows]}
 
         # annotate reads of size 0x40 with 'CCP' (heuristic!)
         for k, v in self.read_accesses.items():
@@ -529,11 +549,13 @@ class PSPTrace:
 
             if latency_in_us > TIME_BLOCK_LATENCY_THRESHOLD:
                 t.add_row([''] * 7)
-                t.add_row([''] * 3 + ['~ %d µs delay ~' % latency_in_us] + [''] * 3)
+                t.add_row([''] * 3 + ['~ %d µs delay ~' %
+                          latency_in_us] + [''] * 3)
                 t.add_row([''] * 7)
 
             v['info'] = ' '.join(v['info'])
-            basic_values = [v['instr_index'], '0x%.6x' % v['lowest_access'], '0x%.6x' % size, v['type'], v['info']]
+            basic_values = [v['instr_index'], '0x%.6x' %
+                            v['lowest_access'], '0x%.6x' % size, v['type'], v['info']]
             verbose_values = [v['start_time'], '0x%.6x' % v['highest_access']]
 
             t.add_row(basic_values + verbose_values)
@@ -556,9 +578,11 @@ class PSPTrace:
 
         # display results
         basic_fields = ['No.', 'Address', 'Size', 'Type', 'Info']
-        verbose_fields = ['Start [ns]', 'End [ns]', 'Duration [ns]', 'Latency [ns]']
+        verbose_fields = ['Start [ns]', 'End [ns]',
+                          'Duration [ns]', 'Latency [ns]']
         all_fields = basic_fields + verbose_fields
-        all_keys = ['instr_index', 'address', 'size', 'type', 'info', 'start_time', 'end_time', 'duration', 'latency']
+        all_keys = ['instr_index', 'address', 'size', 'type',
+                    'info', 'start_time', 'end_time', 'duration', 'latency']
 
         t = PrettyTable(all_fields)
         t.align['Info'] = 'l'
@@ -584,7 +608,8 @@ class PSPTrace:
             # Display significant latencies
             if latency_in_us > TIME_BLOCK_LATENCY_THRESHOLD:
                 t.add_row([''] * 9)
-                t.add_row([''] * 3 + ['~ %d µs delay ~' % latency_in_us] + [''] * 5)
+                t.add_row([''] * 3 + ['~ %d µs delay ~' %
+                          latency_in_us] + [''] * 5)
                 t.add_row([''] * 9)
 
             values['size'] = '0x%.2x' % values['size']
@@ -619,9 +644,12 @@ def main():
     parser.add_argument('-c', '--collapse', help='collapse consecutive reads to the same PSP entry type (denoted by '
                                                  '[c] and sometimes by ~ if collapsing was fuzzy)',
                         action='store_true')
-    parser.add_argument('-t', '--normalize-timestamps', help='normalize all timestamps', action='store_true')
-    parser.add_argument('-l', '--limit-rows', help='limit the processed rows to a maximum of n', type=int)
-    parser.add_argument('-v', '--verbose', help='increase output verbosity', action='store_true')
+    parser.add_argument('-t', '--normalize-timestamps',
+                        help='normalize all timestamps', action='store_true')
+    parser.add_argument(
+        '-l', '--limit-rows', help='limit the processed rows to a maximum of n', type=int)
+    parser.add_argument('-v', '--verbose',
+                        help='increase output verbosity', action='store_true')
     parser.add_argument('-V', '--version', action='store_true')
 
     args = parser.parse_args()
