@@ -33,6 +33,9 @@ from psptool import PSPTool
 from psptool.file import File
 from .winbond_instructions import WINBOND_INSTRUCTIONS
 
+SPI_READ_INSTRUCTIONS = [0x03, 0x0B, 0xEC]
+QSPI_READ_INSTRUCTIONS = [0xEB, 0xE7, 0xE3]
+READ_INSTRUCTIONS = SPI_READ_INSTRUCTIONS + QSPI_READ_INSTRUCTIONS
 
 class ObligingArgumentParser(argparse.ArgumentParser):
     """ Display the full help message whenever there is something wrong with the arguments.
@@ -116,7 +119,7 @@ def get_database(csvfile, psptool):
                 except ValueError:
                     pass
 
-        # Case 2: This CSV export comes from the Quad SPI analyzer at https://github.com/dedicatedcomputing/saleae_qspi
+        # Case 2: This CSV export comes from the Quad SPI analyzer at https://github.com/AddioElectronics/QSPI-Analyzer
         elif reader.fieldnames == ['Time [s]', 'Packet ID', ' Transaction State', ' DATA', ' Lines Used']:
             # todo: Make use of Transaction state. 1 is command byte, 2 is first address byte, then everthing is 4?
             data = {
@@ -269,12 +272,13 @@ def find_read_accesses(data, psptool):
             next_value = data['value'][index + 1]
 
             # normal and Quad IO Read commands
-            if value in [0x03, 0x0B, 0xEB, 0xE7, 0xE3, 0xEC] and next_value in [0xFF, 0xFC]:
+            if value in READ_INSTRUCTIONS and next_value in [0xFF, 0xFC]:
                 if not all(0 <= data['value'][index + i] <= 255 for i in range(5)):
                     # print(f"Skipping invalid read command with {value=:x} {next_value=:x} then: {data['value'][index + 2]:x} {data['value'][index + 3]:x} {data['value'][index + 4]:x} at index {index}")
                     last_index = index
                     index += 1
                     continue
+
                 address = struct.unpack(">I", bytes(
                     data['value'][index + 1:index + 5]))[0]
                 address &= psptool.blob.roms[0].addr_mask
@@ -306,7 +310,7 @@ def find_read_accesses(data, psptool):
                     'last_end_time': last_end_time,
                     'address': address,
                     'type': type_,
-                    'info': ['QSPI'] if value in [0xEB, 0xE7, 0xE3] else []
+                    'info': ['QSPI'] if value in QSPI_READ_INSTRUCTIONS else []
                 }
 
                 # skip forward
