@@ -37,6 +37,7 @@ SPI_READ_INSTRUCTIONS = [0x03, 0x0B, 0xEC]
 QSPI_READ_INSTRUCTIONS = [0xEB, 0xE7, 0xE3]
 READ_INSTRUCTIONS = SPI_READ_INSTRUCTIONS + QSPI_READ_INSTRUCTIONS
 
+
 class ObligingArgumentParser(argparse.ArgumentParser):
     """ Display the full help message whenever there is something wrong with the arguments.
         (from https://groups.google.com/d/msg/argparse-users/LazV_tEQvQw/xJhBOm1qS5IJ) """
@@ -271,57 +272,62 @@ def find_read_accesses(data, psptool):
             value = data['value'][index]
             next_value = data['value'][index + 1]
 
-            # normal and Quad IO Read commands
-            if value in READ_INSTRUCTIONS and next_value in [0xFF, 0xFC]:
-                if not all(0 <= data['value'][index + i] <= 255 for i in range(5)):
-                    # print(f"Skipping invalid read command with {value=:x} {next_value=:x} then: {data['value'][index + 2]:x} {data['value'][index + 3]:x} {data['value'][index + 4]:x} at index {index}")
-                    last_index = index
-                    index += 1
-                    continue
+            if value not in READ_INSTRUCTIONS:
+                index += 1
+                continue
 
+            if next_value.bit_length() > 8:
+                address = next_value
+                next_index_offset = 2
+            elif next_value in [0xFF, 0xFC] and all(0 <= data['value'][index + i] <= 255 for i in range(5)):
+                # normal and Quad IO Read commands
                 address = struct.unpack(">I", bytes(
                     data['value'][index + 1:index + 5]))[0]
-                address &= psptool.blob.roms[0].addr_mask
-
-                start_time = data['time'][index]
-
-                type_ = type_at_address_range[address]
-
-                if instr_index > 0:
-                    # set the read size of the previous read access based on the number of non-instruction values
-                    #  before and deduct the instruction and address packets
-                    read_accesses[last_start_time]['size'] = index - \
-                        last_index - 2
-                    # todo: identify dummy cycles -- nope, this should by done by the analyzer before exporting!
-                    previous_start_time = read_accesses[last_start_time]['start_time']
-                    previous_last_end_time = read_accesses[last_start_time]['last_end_time']
-
-                    previous_end_time = data['time'][index - 1]
-                    previous_duration = previous_end_time - previous_start_time
-                    previous_latency = previous_start_time - previous_last_end_time
-
-                    read_accesses[last_start_time]['end_time'] = previous_end_time
-                    read_accesses[last_start_time]['duration'] = previous_duration
-                    read_accesses[last_start_time]['latency'] = previous_latency
-
-                read_accesses[start_time] = {
-                    'instr_index': instr_index,
-                    'start_time': start_time,
-                    'last_end_time': last_end_time,
-                    'address': address,
-                    'type': type_,
-                    'info': ['QSPI'] if value in QSPI_READ_INSTRUCTIONS else []
-                }
-
-                # skip forward
-                last_start_time = start_time
-                last_end_time = previous_end_time if instr_index > 0 else 0
-                last_index = index
-                # one address packet and at least one dummy packet (it seems)
-                index += 2
-                instr_index += 1
+                next_index_offset = 5
             else:
+                # print(f"Skipping invalid read command with {value=:x} {next_value=:x} then: {data['value'][index + 2]:x} {data['value'][index + 3]:x} {data['value'][index + 4]:x} at index {index}")
                 index += 1
+                continue
+
+            address &= psptool.blob.roms[0].addr_mask
+
+            start_time = data['time'][index]
+
+            type_ = type_at_address_range[address]
+
+            if instr_index > 0:
+                # set the read size of the previous read access based on the number of non-instruction values
+                #  before and deduct the instruction and address packets
+                read_accesses[last_start_time]['size'] = index - \
+                    last_index - next_index_offset
+                # todo: identify dummy cycles -- nope, this should by done by the analyzer before exporting!
+                previous_start_time = read_accesses[last_start_time]['start_time']
+                previous_last_end_time = read_accesses[last_start_time]['last_end_time']
+
+                previous_end_time = data['time'][index - 1]
+                previous_duration = previous_end_time - previous_start_time
+                previous_latency = previous_start_time - previous_last_end_time
+
+                read_accesses[last_start_time]['end_time'] = previous_end_time
+                read_accesses[last_start_time]['duration'] = previous_duration
+                read_accesses[last_start_time]['latency'] = previous_latency
+
+            read_accesses[start_time] = {
+                'instr_index': instr_index,
+                'start_time': start_time,
+                'last_end_time': last_end_time,
+                'address': address,
+                'type': type_,
+                'info': ['QSPI'] if value in QSPI_READ_INSTRUCTIONS else []
+            }
+
+            # skip forward
+            last_start_time = start_time
+            last_end_time = previous_end_time if instr_index > 0 else 0
+            last_index = index
+            # one address packet and at least one dummy packet (it seems)
+            index += next_index_offset
+            instr_index += 1
 
         # set the read size of the previous read access based on the number of non-instruction values
         #  before and deduct the instruction and address packets
