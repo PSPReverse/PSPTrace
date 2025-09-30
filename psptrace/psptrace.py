@@ -16,6 +16,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+from enum import Enum
 import os
 import pickle
 import csv
@@ -36,6 +37,12 @@ from .winbond_instructions import WINBOND_INSTRUCTIONS
 SPI_READ_INSTRUCTIONS = [0x03, 0x0B, 0xEC]
 QSPI_READ_INSTRUCTIONS = [0xEB, 0xE7, 0xE3]
 READ_INSTRUCTIONS = SPI_READ_INSTRUCTIONS + QSPI_READ_INSTRUCTIONS
+
+
+class TransactionState(Enum):
+    COMMAND = 1
+    ADDRESS = 2
+    DATA = 4
 
 
 class ObligingArgumentParser(argparse.ArgumentParser):
@@ -126,6 +133,7 @@ def get_database(csvfile, psptool):
             data = {
                 'raw': {
                     'time': [],
+                    'state': [],
                     'value': []
                 },
                 'read_accesses': None,
@@ -134,6 +142,8 @@ def get_database(csvfile, psptool):
             for row in reader:
                 try:
                     data['raw']['time'].append(float(row['Time [s]']))
+                    data['raw']['state'].append(
+                        TransactionState(int(row[' Transaction State'])))
                     data['raw']['value'].append(int(row[' DATA'], 16))
                 except ValueError:
                     pass
@@ -272,7 +282,7 @@ def find_read_accesses(data, psptool):
             value = data['value'][index]
             next_value = data['value'][index + 1]
 
-            if value not in READ_INSTRUCTIONS:
+            if data['state'][index] is not TransactionState.COMMAND or value not in READ_INSTRUCTIONS:
                 index += 1
                 continue
 
@@ -285,7 +295,8 @@ def find_read_accesses(data, psptool):
                     data['value'][index + 1:index + 5]))[0]
                 next_index_offset = 5
             else:
-                # print(f"Skipping invalid read command with {value=:x} {next_value=:x} then: {data['value'][index + 2]:x} {data['value'][index + 3]:x} {data['value'][index + 4]:x} at index {index}")
+                print(
+                    f"Skipping invalid read command with {value=:x} {next_value=:x} then: {data['value'][index + 2]:x} {data['value'][index + 3]:x} {data['value'][index + 4]:x} at index {index}")
                 index += 1
                 continue
 
