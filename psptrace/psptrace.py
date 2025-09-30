@@ -147,6 +147,8 @@ def get_database(csvfile, psptool):
                     data['raw']['value'].append(int(row[' DATA'], 16))
                 except ValueError:
                     pass
+        else:
+            exit("Data format is not supported")
 
     # convert timestamp from s to ns
     data['raw']['time'] = [int(t * 10 ** 9) for t in data['raw']['time']]
@@ -171,7 +173,6 @@ def find_read_accesses(data, psptool):
     # use psptool to correlate addresses to firmware directory entries
     directories = [
         directory for rom in psptool.blob.roms for directory in rom.directories]
-    directory_entries = [directory.entries for directory in directories]
 
     # flatten list of lists
     all_entries = psptool.blob.unique_files()
@@ -207,6 +208,7 @@ def find_read_accesses(data, psptool):
     index = 0
     last_index = 0
     instr_index = 0
+    previous_end_time = 0
     end_time = data['time'][index]
 
     # Case 1: This CSV export comes from the standard Saleae SPI analyzer
@@ -430,7 +432,7 @@ def collapse_entry_types(read_accesses):
         'duplicate_count': None
     }
 
-    for time, values in read_accesses:
+    for _, values in read_accesses:
         if (last_access['address'] is not None
                 # only collapse accesses of the same type (e.g. PSP_FW_BOOT_LOADER)
                 and values['type'] == last_access['type']
@@ -492,7 +494,6 @@ IO functions
 
 
 def get_overview_read_accesses(read_accesses):
-    entry_types = File.DIRECTORY_ENTRY_TYPES
     overview_read_accesses = {}
     known_types = {}  # dict of (type, is_ccp) and original_access_time
 
@@ -539,7 +540,7 @@ class PSPTrace:
                 self.read_accesses.items())[:limit_rows]}
 
         # annotate reads of size 0x40 with 'CCP' (heuristic!)
-        for k, v in self.read_accesses.items():
+        for _, v in self.read_accesses.items():
             if v['size'] == 0x40:
                 v['info'].append('CCP')
 
@@ -552,7 +553,7 @@ class PSPTrace:
         t = PrettyTable(all_fields)
         overview_read_accesses = get_overview_read_accesses(self.read_accesses)
 
-        for k, v in sorted(overview_read_accesses.items()):
+        for _, v in sorted(overview_read_accesses.items()):
             size = v['highest_access'] - v['lowest_access']
 
             # Improve output of type # todo: remove code duplicate
@@ -614,7 +615,7 @@ class PSPTrace:
 
         entry_types = File.DIRECTORY_ENTRY_TYPES
 
-        for start_time, values in sorted(read_accesses.items()):
+        for _, values in sorted(read_accesses.items()):
             # Improve output of type
             if values['type'] is None:
                 values['type'] = 'Unknown area'
