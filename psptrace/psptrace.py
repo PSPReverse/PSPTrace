@@ -23,10 +23,10 @@ import csv
 import struct
 import sys
 import argparse
-import pkg_resources
 
 from signal import signal, SIGPIPE, SIG_DFL
 from collections import deque
+from importlib.metadata import version
 
 from prettytable import PrettyTable
 
@@ -677,7 +677,7 @@ def main():
     args = parser.parse_args()
 
     if args.version:
-        print(pkg_resources.get_distribution("psptrace").version)
+        print(version("psptrace"))
         sys.exit(0)
     elif not args.csvfile or not args.romfile:
         parser.print_help(sys.stderr)
