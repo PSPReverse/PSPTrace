@@ -297,8 +297,7 @@ def find_read_accesses(data, psptool):
                     data['value'][index + 1:index + 5]))[0]
                 next_index_offset = 5
             else:
-                print(
-                    f"Skipping invalid read command with {value=:x} {next_value=:x} then: {data['value'][index + 2]:x} {data['value'][index + 3]:x} {data['value'][index + 4]:x} at index {index}")
+                print(f"Skipping invalid read command with {value=:x} {next_value=:x} then: {data['value'][index+2:index+4] if index + 4 < len(data['value']) else []} at index {index}")
                 index += 1
                 continue
 
