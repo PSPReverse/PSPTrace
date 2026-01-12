@@ -1,4 +1,6 @@
 from .psptrace import PSPTrace
 
-import pkg_resources
-__version__ = pkg_resources.get_distribution("psptrace").version
+from .psptrace import PSPTrace
+from importlib.metadata import version
+
+__version__ = version("psptrace") 

@@ -1,0 +1,18 @@
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
+name = "psptrace"
+dynamic = ["version"]
+authors = [{name = "Christian Werling", email = "cwerling@posteo.de"}]
+description = "PSPTrace can correlate an SPI capture of an AMD boot procedure to the PSP firmware components"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "psptool>=3.0",
+    "prettytable",
+]
+
+[tool.hatch.version]
+source = "vcs"
