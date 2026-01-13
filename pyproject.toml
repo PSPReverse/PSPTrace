@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.scripts]
-psptool = "psptrace.__main__:main"
+psptrace = "psptrace.__main__:main"
 
 [tool.hatch.version]
 source = "vcs"
